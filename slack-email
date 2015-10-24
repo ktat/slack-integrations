@@ -1,0 +1,58 @@
+#!/usr/bin/env perl
+
+use MIME::Parser;
+use JSON;
+use strict;
+use HTTP::Request::Common qw(POST);
+use LWP::UserAgent;
+use Encode;
+use Encode::MIME::Header;
+use MIME::Base64 qw/decode_base64/;
+
+my $domain            = 'example.com';
+my $email_prefix      = 'slack+';
+my $slack_webhook_url = 'https://hooks.slack.com/services/....'; # slack incoming webhook url
+
+my $p = MIME::Parser->new;
+$p->output_dir('/tmp');
+
+my $entity = $p->parse(\*STDIN);
+my $header = $entity->head;
+
+my ($author) = $header->get('From') =~ m{\b([\w\-.+]+)\@\Q$domain\E} or exit 1;
+my ($channel) = $header->get('To') =~ m{\Q$email_prefix\E(.*?)\@};
+my ($charset) = $header->get('Content-Type') =~ m{charset\=(.+)}i;
+
+my $title   = Encode::decode('MIME-Header', $header->get('Subject'));
+my $body = join("",@{$entity->body});
+my $decoded_body  = Encode::decode($charset, $body);
+if ($decoded_body eq $body) {
+  $body =~s{[\r\n]}{}g;
+  $decoded_body = Encode::decode($charset, decode_base64($body));
+}
+
+my $payload = {
+               channel => '#' . $channel,
+               text => "email from \@$author",
+               attachments => [
+                               {
+                                title => $title,
+                                text  => "```$decoded_body```",
+                                short => 'false',
+                                color => '#36a64f',
+                                mrkdwn_in => ['text'],
+                               }
+                              ],
+              };
+
+my $ua = LWP::UserAgent->new;
+$ua->timeout(15);
+
+my $req = POST("$slack_webhook_url", ['payload' => encode_json($payload)]);
+my $res = $ua->request($req);
+
+if (not $res->is_success) {
+  exit 1;
+}
+
+exit 0;
