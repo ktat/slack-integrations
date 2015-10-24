@@ -9,7 +9,7 @@ use Encode;
 use Encode::MIME::Header;
 use MIME::Base64 qw/decode_base64/;
 
-my $domain            = 'example.com';
+my @domain            = ('example.com');
 my $email_prefix      = 'slack+';
 my $slack_webhook_url = 'https://hooks.slack.com/services/....'; # slack incoming webhook url
 
@@ -19,16 +19,28 @@ $p->output_dir('/tmp');
 my $entity = $p->parse(\*STDIN);
 my $header = $entity->head;
 
-my ($author) = $header->get('From') =~ m{\b([\w\-.+]+)\@\Q$domain\E} or exit 1;
+my $author;
+foreach my $domain (@domain) {
+  if ($header->get('From') =~ m{\b([\w\-.+]+)\@\Q$domain\E}) {
+    $author = $1;
+    last;
+  }
+}
+
+exit(1) if not $author;
+
 my ($channel) = $header->get('To') =~ m{\Q$email_prefix\E(.*?)\@};
 my ($charset) = $header->get('Content-Type') =~ m{charset\=(.+)}i;
 
 my $title   = Encode::decode('MIME-Header', $header->get('Subject'));
 my $body = join("",@{$entity->body});
-my $decoded_body  = Encode::decode($charset, $body);
-if ($decoded_body eq $body) {
+my $decoded_body;
+
+if ($charset =~ m{utf-?8}i) { # for gmail?
   $body =~s{[\r\n]}{}g;
   $decoded_body = Encode::decode($charset, decode_base64($body));
+} else {
+  $decoded_body  = Encode::decode($charset, $body);
 }
 
 my $payload = {
