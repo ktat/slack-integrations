@@ -1,6 +1,8 @@
 #!/usr/bin/env perl
 
-# Time-stamp: "2015-10-24 11:25:54 ktat"
+use Encode;
+
+# Time-stamp: "2015-10-24 15:26:30 ktat"
 
 our $VERSION = 0.0.1;
 
@@ -194,17 +196,20 @@ sub prepare_contents {
   $c->{author} = shift @$lines;
   $c->{date} = shift @$lines;
   $c->{message_size} = shift @$lines;
-  $c->{attachments}{pretext} = '@' . $c->{author} . ' : ' . join("\n",@$lines) . ' : revision ' . $opts->{revision};
+  $c->{attachments}{pretext} = Encode::decode('utf8', '@' . $c->{author} . ' : ' . join("\n",@$lines) . ' : revision ' . $opts->{revision});
   $c->{text} = $c->{attachments}{fallback} = $c->{attachments}{pretext};
 
-  my $lines = _read_pipe($opts->{svnlook}, 'diff', $opts->{repos_path},
-             '-r', $opts->{revision});
-
   if (not $opts->{short}) {
-    $c->{attachments}{fields}{text} = join("\n", @$lines);
-    $c->{attachments}{fields}{title} = 'SVN Notification';
-    $c->{attachments}{fields}{short} = 'false';
-    $c->{attachments}{fields}{color} = '#36a64f';
+    my $lines = _read_pipe($opts->{svnlook}, 'diff', $opts->{repos_path},
+             '-r', $opts->{revision});
+    my $diff = join("\n", @$lines);
+    $c->{attachments} = [{
+         text  => '```' . Encode::decode('utf8', $diff) . '```',
+         title => 'SVN Notification',
+         short => 'false',
+         color => '#36a64f',
+         mrkdwn_in => ['text'],
+    }],
   }
 
   return $c;
