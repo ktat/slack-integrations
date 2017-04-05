@@ -1,5 +1,7 @@
 #! /usr/local/bin/perl
 
+use Encode;
+
 # Time-stamp: "03 March 2014, 18:15:30 (khera@yertle.int.kcilink.com)"
 
 =head1 NAME
@@ -10,7 +12,6 @@ slack-subversion - Add svn commit log message to Slack channel
 
  slack-subversion --repos-path "$REPOS" --revision "$REV" \
   --revision-url "http://projects/svnweb/index.cgi/rwde/revision?rev=%s" \
-  --slack-credentials domain,key
 
 =head1 OPTIONS
 
@@ -62,8 +63,7 @@ require Pod::Usage && Pod::Usage::pod2usage(
     '-sections' => '(?i:(Synopsis|Options))',
     '-exitval'  => 0,
 ) if $opts->{help}
-  or not($opts->{'repos_path'} and $opts->{'revision'}
-	 and $opts->{'slack_credentials'});
+  or not($opts->{'repos_path'} and $opts->{'revision'});
 
 unless ($opts->{svnlook}) {
   die "Unable to find svnlook binary. Specify --svnlook parameter.\n";
@@ -85,15 +85,18 @@ my $payload = {
   revision => $opts->{revision},
   url => $view_url,
   author => $contents->{author},
-  log => $contents->{message},
+  text  => $contents->{text},
 };
+if ($contents->{attachments}) {
+  $payload->{attachments} = $contents->{attachments};
+}
 
 my $ua = LWP::UserAgent->new;
 $ua->timeout(15);
 
-my ($domain,$token) = split /,/,$opts->{slack_credentials};
+my $slack_webhook_url = $opts->{slack_webhook_url};
 
-my $req = POST("https://${domain}/services/hooks/subversion?token=${token}", ['payload' => encode_json($payload)]);
+my $req = POST("$slack_webhook_url", ['payload' => encode_json($payload)]);
 
 my $resp = $ua->request($req);
 
@@ -101,7 +104,7 @@ if ($resp->is_success) {
   #print $resp->decoded_content;
 }
 else {
-  die $resp->status_line;
+  die $resp->status_line . $resp->content, encode_json($payload);
 }
 
 exit(0);
@@ -121,8 +124,9 @@ sub get_options {
 	     'repos-path|p=s' => \$opts->{repos_path},
 	     'revision|r=s' => \$opts->{revision},
 	     'revision-url=s' => \$opts->{revision_url},
-	     'slack-credentials=s' => \$opts->{slack_credentials},
+	     'slack-webhook-url=s' => \$opts->{slack_webhook_url},
 
+             'short'     => \$opts->{short},
 	     'svnlook=s' => \$opts->{svnlook},
 	     'verbose|V+' => \$opts->{verbose},
 	     'help|h' => \$opts->{help},
@@ -185,7 +189,27 @@ sub prepare_contents {
   $c->{author} = shift @$lines;
   $c->{date} = shift @$lines;
   $c->{message_size} = shift @$lines;
-  $c->{message} = join("\n",@$lines);
+  $c->{attachments}{pretext} = Encode::decode('utf8', '@' . $c->{author} . ' : ' . shift(@$lines) . ' : revision ' . $opts->{revision});
+  $c->{text} = $c->{attachments}{fallback} = $c->{attachments}{pretext};
+
+  if (not $opts->{short}) {
+    my $lines = _read_pipe($opts->{svnlook}, 'diff', $opts->{repos_path},
+			 '-r', $opts->{revision});
+    my $diff = join("\n", @$lines);
+    $c->{attachments} = [{
+         text  => '```' . Encode::decode('utf8', $diff) . '```',
+         title => 'SVN Notification',
+         short => 'false',
+         color => '#36a64f',
+         mrkdwn_in => ['text'],
+    }],
+  } else {
+     my $lines = _read_pipe($opts->{svnlook}, 'changed', $opts->{repos_path},
+			 '-r', $opts->{revision});
+     $lines->[0] =~s{/(branches/\w+/|trunk).+$}{/$1};
+     $lines->[0] =~s{^.+ }{};
+     $c->{text} .= " -- " . $lines->[0];
+  }
 
   return $c;
 }
